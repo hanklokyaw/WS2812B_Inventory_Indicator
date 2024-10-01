@@ -120,3 +120,4 @@ if __name__ == "__main__":
 
     # Start the breathing effect
     breathe_effect(breath_color, target_leds, duration=5, fps=30)
+    
