@@ -2,14 +2,17 @@ import time
 import board
 import neopixel
 import math
+import pandas as pd
 
 # ------------------------------
 # Configuration Parameters
 # ------------------------------
 
 # Define the number of LEDs and the GPIO pin
-LED_COUNT = 55          # Number of LED pixels.
+LED_COUNT = 60          # Number of LED pixels.
 LED_PIN = board.D18     # GPIO pin connected to the pixels (must support PWM!).
+
+df = pd.read_excel("/home/anapi01/Downloads/test_sku.xlsx")
 
 # Initialize the NeoPixel strip.
 pixels = neopixel.NeoPixel(
@@ -101,23 +104,48 @@ def breathe_effect(color_name, address_list, duration=BREATH_DURATION, fps=FPS):
 
     except KeyboardInterrupt:
         # Gracefully turn off the specified LEDs on exit
-        for addr in address_list:
-            if 0 <= addr < LED_COUNT:
-                pixels[addr] = (0, 0, 0)
-        pixels.show()
+        reset_leds(address_list)
         print("\nBreathing effect stopped and specified LEDs turned off.")
+
+def reset_leds(address_list):
+    """
+    Turn off the specified LEDs.
+
+    :param address_list: A list of LED indices to turn off.
+    """
+    for addr in address_list:
+        if 0 <= addr < LED_COUNT:
+            pixels[addr] = (0, 0, 0)
+    pixels.show()
+
+def find_address(df):
+    user_input = input("Enter SKU: ").lower()
+
+    # Filter the dataframe to get the address
+    matching_row = df[df["Label"].str.lower() == user_input]
+
+    if matching_row.empty:
+        print("No SKU match.")
+        return None  # Handle case when no SKU matches
+    else:
+        address = matching_row["Address"].values[0]  # Get the first address match
+        return address
 
 # ------------------------------
 # Example Usage
 # ------------------------------
 
 if __name__ == "__main__":
-    # Define the LEDs you want to apply the breathing effect to
-    target_leds = [10, 12]
+    # Find address based on user input SKU
+    address = find_address(df)
 
-    # Define the color for the breathing effect
-    breath_color = "Green"
+    if address is not None:
+        target_leds = [address]
 
-    # Start the breathing effect
-    breathe_effect(breath_color, target_leds, duration=5, fps=30)
-    
+        # Define the color for the breathing effect
+        breath_color = "White"
+
+        # Start the breathing effect
+        breathe_effect(breath_color, target_leds, duration=5, fps=30)
+    else:
+        print("Exiting due to no matching SKU.")
