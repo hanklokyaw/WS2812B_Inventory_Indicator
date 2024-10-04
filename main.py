@@ -15,7 +15,7 @@ LED_PIN = board.D18     # GPIO pin connected to the pixels (must support PWM!).
 
 # Paths to the mapping files
 SKU_EXCEL_FILE_PATH = "/home/anapi01/Downloads/test_sku.xlsx"
-SALES_ORDER_CSV_PATH = "/home/anapi01/Downloads/sales_order.csv"
+SALES_ORDER_CSV_PATH = "/home/anapi01/WS2812B_test/sales_order.csv"
 
 # Initialize the NeoPixel strip.
 pixels = neopixel.NeoPixel(
@@ -152,7 +152,10 @@ def find_addresses(sku_df, so_df, user_input):
     # Check if input is a Sales Order ID (assuming it's all digits)
     if user_input.isdigit():
         # Treat as Sales Order ID
+        # Ensure 'id' column is string for accurate comparison
+        so_df["id"] = so_df["id"].astype(str)
         matching_rows = so_df[so_df["id"] == user_input]
+
         if matching_rows.empty:
             print("[Info] No Sales Order match found.")
             return (None, None)
@@ -206,6 +209,13 @@ def main():
     except Exception as e:
         print(f"[Error] An error occurred while reading the Sales Order CSV file: {e}")
         return
+
+    # Debugging: Print the first few rows to verify data
+    print("\n--- SKU DataFrame Head ---")
+    print(sku_df.head())
+    print("\n--- Sales Order DataFrame Head ---")
+    print(so_df.head())
+    print("\n------------------------------\n")
 
     print("=== WS2812B LED Control ===")
     print("Available colors:", ", ".join(COLOR_MAP.keys()))
