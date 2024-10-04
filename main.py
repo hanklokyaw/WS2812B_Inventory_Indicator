@@ -4,7 +4,6 @@ import neopixel
 import math
 import pandas as pd
 import threading
-import re
 
 # ------------------------------
 # Configuration Parameters
@@ -14,9 +13,9 @@ import re
 LED_COUNT = 60          # Number of LED pixels.
 LED_PIN = board.D18     # GPIO pin connected to the pixels (must support PWM!).
 
-# Paths to the data files
+# Paths to the mapping files
 SKU_EXCEL_FILE_PATH = "/home/anapi01/Downloads/test_sku.xlsx"
-SALES_ORDER_CSV_PATH = "/home/anapi01/WS2812B_test/sales_order.csv"
+SALES_ORDER_CSV_PATH = "/home/anapi01/Downloads/sales_order.csv"
 
 # Initialize the NeoPixel strip.
 pixels = neopixel.NeoPixel(
@@ -41,9 +40,15 @@ BREATH_DURATION = 5   # Duration for one complete breath cycle (seconds)
 # Global Variables for Thread Management
 # ------------------------------
 
-# Dictionary to keep track of active breathing threads
-active_threads = {}
-thread_lock = threading.Lock()
+# Threads and stop events for SKU and Sales Order breathing effects
+sku_thread = None
+sku_stop_event = threading.Event()
+
+so_thread = None
+so_stop_event = threading.Event()
+
+# Lock to manage access to NeoPixel strip
+pixels_lock = threading.Lock()
 
 # ------------------------------
 # Function Definitions
@@ -65,16 +70,17 @@ def set_led_color(color_name, address_list):
     color = COLOR_MAP[color_name]
 
     # Apply the color to each specified LED
-    for addr in address_list:
-        if 0 <= addr < LED_COUNT:
-            pixels[addr] = color
-        else:
-            print(f"[Warning] LED index {addr} is out of range (0 to {LED_COUNT - 1}).")
+    with pixels_lock:
+        for addr in address_list:
+            if 0 <= addr < LED_COUNT:
+                pixels[addr] = color
+            else:
+                print(f"[Warning] LED index {addr} is out of range (0 to {LED_COUNT - 1}).")
 
-    # Update the LED strip to show the changes
-    pixels.show()
+        # Update the LED strip to show the changes
+        pixels.show()
 
-def breathe_effect(color_name, address_list, duration=BREATH_DURATION, fps=FPS, stop_event=None, thread_id=None):
+def breathe_effect(color_name, address_list, duration=BREATH_DURATION, fps=FPS, stop_event=threading.Event()):
     """
     Apply a breathing (fade in and out) effect to specified LEDs.
 
@@ -83,7 +89,6 @@ def breathe_effect(color_name, address_list, duration=BREATH_DURATION, fps=FPS, 
     :param duration: Total duration for one breath cycle (seconds).
     :param fps: Frames per second for smoothness.
     :param stop_event: threading.Event to signal stopping the effect.
-    :param thread_id: Unique identifier for the thread.
     """
     # Validate color name
     if color_name not in COLOR_MAP:
@@ -106,224 +111,173 @@ def breathe_effect(color_name, address_list, duration=BREATH_DURATION, fps=FPS, 
             current_color = tuple(int(c * brightness) for c in base_color)
 
             # Apply the current color to the specified LEDs
-            for addr in address_list:
-                if 0 <= addr < LED_COUNT:
-                    pixels[addr] = current_color
-                else:
-                    print(f"[Warning] LED index {addr} is out of range (0 to {LED_COUNT - 1}).")
+            with pixels_lock:
+                for addr in address_list:
+                    if 0 <= addr < LED_COUNT:
+                        pixels[addr] = current_color
+                    else:
+                        print(f"[Warning] LED index {addr} is out of range (0 to {LED_COUNT - 1}).")
 
-            # Update the LED strip to show the changes
-            pixels.show()
+                # Update the LED strip to show the changes
+                pixels.show()
 
             # Control the update rate
             time.sleep(1 / fps)
 
     # Once stop_event is set, ensure LEDs are turned off
-    reset_leds(address_list, thread_id)
-    print(f"\n[Info] Breathing effect for Thread ID {thread_id} stopped and specified LEDs turned off.")
+    reset_leds(address_list)
+    print(f"\nBreathing effect for color '{color_name}' on LEDs {address_list} stopped and turned off.")
 
-def reset_leds(address_list, thread_id=None):
+def reset_leds(address_list):
     """
     Turn off the specified LEDs.
 
     :param address_list: A list of LED indices to turn off.
-    :param thread_id: Unique identifier for the thread (optional).
     """
-    for addr in address_list:
-        if 0 <= addr < LED_COUNT:
-            pixels[addr] = (0, 0, 0)
-    pixels.show()
-    if thread_id is not None:
-        print(f"[Info] LEDs {address_list} turned off by Thread ID {thread_id}.")
+    with pixels_lock:
+        for addr in address_list:
+            if 0 <= addr < LED_COUNT:
+                pixels[addr] = (0, 0, 0)
+        pixels.show()
 
-def find_address_by_sku(df_sku, sku_input):
+def find_addresses(sku_df, so_df, user_input):
     """
-    Find LED addresses corresponding to a given SKU.
+    Determine if the user input is a SKU or Sales Order ID and retrieve corresponding LED addresses.
 
-    :param df_sku: Pandas DataFrame containing SKU and Address mappings.
-    :param sku_input: SKU string entered by the user.
-    :return: List of LED addresses if found, else None.
+    :param sku_df: DataFrame containing SKU to Address mappings.
+    :param so_df: DataFrame containing Sales Order to SKU mappings.
+    :param user_input: The input entered by the user.
+    :return: Tuple (type, addresses) where type is 'sku' or 'so' and addresses is a list of LED indices.
     """
-    sku_input_lower = sku_input.lower()
-    matching_rows = df_sku[df_sku["Label"].str.lower() == sku_input_lower]
-
-    if matching_rows.empty:
-        print("[Info] No SKU match found.")
-        return None
-    else:
-        # Assuming 'Address' column contains integer indices
-        addresses = matching_rows["Address"].tolist()
-        print(f"[Info] Found address(es) for SKU '{sku_input}': {addresses}")
-        return addresses
-
-def find_skus_by_sales_order(df_order, sales_order_id):
-    """
-    Find SKUs corresponding to a given Sales Order ID.
-
-    :param df_order: Pandas DataFrame containing Sales Order ID and SKU mappings.
-    :param sales_order_id: Sales Order ID entered by the user.
-    :return: List of SKUs if found, else None.
-    """
-    matching_rows = df_order[df_order["id"].astype(str) == str(sales_order_id)]
-
-    if matching_rows.empty:
-        print("[Info] No Sales Order match found.")
-        return None
-    else:
-        skus = matching_rows["sku"].tolist()
-        print(f"[Info] Found SKU(s) for Sales Order ID '{sales_order_id}': {skus}")
-        return skus
-
-def handle_input(df_sku, df_order):
-    """
-    Handle user input, determine if it's a SKU or Sales Order ID, and initiate breathing effects accordingly.
-
-    :param df_sku: Pandas DataFrame containing SKU and Address mappings.
-    :param df_order: Pandas DataFrame containing Sales Order ID and SKU mappings.
-    """
-    global active_threads, thread_lock
-
-    user_input = input("Enter SKU or Sales Order ID (or type 'exit' to quit): ").strip()
-
-    if user_input.lower() == 'exit':
-        print("Exiting program.")
-        return 'exit'
-
-    # Determine if input is Sales Order ID (numeric) or SKU (alphanumeric)
+    # Check if input is a Sales Order ID (assuming it's all digits)
     if user_input.isdigit():
-        # Input is Sales Order ID
-        sales_order_id = user_input
-        skus = find_skus_by_sales_order(df_order, sales_order_id)
-
-        if skus is None:
-            return None
-
-        # Find all LED addresses for the SKUs in this sales order
-        all_addresses = []
-        for sku in skus:
-            addresses = find_address_by_sku(df_sku, sku)
-            if addresses:
-                all_addresses.extend(addresses)
-
-        if not all_addresses:
-            print("[Info] No LED addresses found for the SKUs in this Sales Order.")
-            return None
-
-        # Start breathing effect for each unique SKU with its own color
-        # Assuming each SKU has a unique color, else assign a default color
-        for sku in skus:
-            addresses = find_address_by_sku(df_sku, sku)
-            if addresses:
-                # You can define a default color or map SKU to specific colors if needed
-                # Here, we'll use "White" for sales order breathing
-                breath_color = "White"
-                with thread_lock:
-                    # Generate a unique thread ID
-                    thread_id = len(active_threads) + 1
-                    # Create stop event for the thread
-                    stop_event = threading.Event()
-                    # Start the breathing effect thread
-                    thread = threading.Thread(
-                        target=breathe_effect,
-                        args=(breath_color, addresses, BREATH_DURATION, FPS, stop_event, thread_id),
-                        daemon=True
-                    )
-                    thread.start()
-                    # Store thread information
-                    active_threads[thread_id] = {
-                        'thread': thread,
-                        'stop_event': stop_event
-                    }
-                    print(f"[Info] Started breathing effect Thread ID {thread_id} for Sales Order ID {sales_order_id}.")
-
+        # Treat as Sales Order ID
+        matching_rows = so_df[so_df["id"] == user_input]
+        if matching_rows.empty:
+            print("[Info] No Sales Order match found.")
+            return (None, None)
+        else:
+            # Retrieve all SKUs associated with this Sales Order
+            skus = matching_rows["sku"].tolist()
+            addresses = []
+            for sku in skus:
+                sku_match = sku_df[sku_df["Label"].str.lower() == sku.lower()]
+                if not sku_match.empty:
+                    addr = sku_match["Address"].tolist()
+                    addresses.extend(addr)
+                else:
+                    print(f"[Warning] SKU '{sku}' in Sales Order '{user_input}' not found in SKU mapping.")
+            if not addresses:
+                print(f"[Info] No valid LED addresses found for Sales Order '{user_input}'.")
+                return (None, None)
+            return ('so', addresses)
     else:
-        # Input is SKU
-        sku_input = user_input
-        addresses = find_address_by_sku(df_sku, sku_input)
+        # Treat as SKU
+        sku_match = sku_df[sku_df["Label"].str.lower() == user_input.lower()]
+        if sku_match.empty:
+            print("[Info] No SKU match found.")
+            return (None, None)
+        else:
+            addresses = sku_match["Address"].tolist()
+            return ('sku', addresses)
 
-        if addresses is None:
-            return None
-
-        # Define the color for the breathing effect
-        breath_color = "White"  # You can modify this or make it dynamic
-
-        # Start breathing effect for the SKU
-        with thread_lock:
-            # Generate a unique thread ID
-            thread_id = len(active_threads) + 1
-            # Create stop event for the thread
-            stop_event = threading.Event()
-            # Start the breathing effect thread
-            thread = threading.Thread(
-                target=breathe_effect,
-                args=(breath_color, addresses, BREATH_DURATION, FPS, stop_event, thread_id),
-                daemon=True
-            )
-            thread.start()
-            # Store thread information
-            active_threads[thread_id] = {
-                'thread': thread,
-                'stop_event': stop_event
-            }
-            print(f"[Info] Started breathing effect Thread ID {thread_id} for SKU '{sku_input}'.")
-
-def stop_all_breathing_effects():
-    """
-    Stop all active breathing effect threads and turn off their LEDs.
-    """
-    global active_threads, thread_lock
-
-    with thread_lock:
-        for thread_id, info in active_threads.items():
-            print(f"[Info] Stopping breathing effect Thread ID {thread_id}...")
-            info['stop_event'].set()
-
-        # Wait for all threads to finish
-        for thread_id, info in active_threads.items():
-            info['thread'].join()
-            reset_leds([])  # Ensure all LEDs are turned off
-
-        # Clear the active_threads dictionary
-        active_threads.clear()
-        print("[Info] All breathing effects stopped.")
+# ------------------------------
+# Main Loop
+# ------------------------------
 
 def main():
-    global active_threads, thread_lock
+    global sku_thread, sku_stop_event, so_thread, so_stop_event
 
-    # Load the SKU Excel file into a DataFrame
+    # Load the SKU and Sales Order files into DataFrames
     try:
-        df_sku = pd.read_excel(SKU_EXCEL_FILE_PATH)
+        sku_df = pd.read_excel(SKU_EXCEL_FILE_PATH)
     except FileNotFoundError:
-        print(f"[Error] Excel file not found at path: {SKU_EXCEL_FILE_PATH}")
+        print(f"[Error] SKU Excel file not found at path: {SKU_EXCEL_FILE_PATH}")
         return
     except Exception as e:
-        print(f"[Error] An error occurred while reading the Excel file: {e}")
+        print(f"[Error] An error occurred while reading the SKU Excel file: {e}")
         return
 
-    # Load the Sales Order CSV file into a DataFrame
     try:
-        df_order = pd.read_csv(SALES_ORDER_CSV_PATH, dtype={'id': str, 'sku': str})
+        so_df = pd.read_csv(SALES_ORDER_CSV_PATH)
     except FileNotFoundError:
-        print(f"[Error] CSV file not found at path: {SALES_ORDER_CSV_PATH}")
+        print(f"[Error] Sales Order CSV file not found at path: {SALES_ORDER_CSV_PATH}")
         return
     except Exception as e:
-        print(f"[Error] An error occurred while reading the CSV file: {e}")
+        print(f"[Error] An error occurred while reading the Sales Order CSV file: {e}")
         return
 
     print("=== WS2812B LED Control ===")
     print("Available colors:", ", ".join(COLOR_MAP.keys()))
     print("Type 'exit' to quit the program.\n")
+    print("Instructions:")
+    print("- To scan a SKU, enter the SKU code (e.g., ED-BB-TI-16g-D3).")
+    print("- To scan a Sales Order ID, enter the numeric ID (e.g., 101536679).\n")
 
-    try:
-        while True:
-            handle = handle_input(df_sku, df_order)
-            if handle == 'exit':
-                break
-    except KeyboardInterrupt:
-        print("\n[Info] KeyboardInterrupt received. Exiting...")
-    finally:
-        # Stop all breathing effects and turn off LEDs
-        stop_all_breathing_effects()
+    while True:
+        user_input = input("Enter SKU or Sales Order ID (or type 'exit' to quit): ").strip()
+
+        if user_input.lower() == 'exit':
+            print("Exiting program.")
+            break
+
+        input_type, addresses = find_addresses(sku_df, so_df, user_input)
+
+        if addresses is None:
+            continue  # Invalid input, prompt again
+
+        if input_type == 'sku':
+            # Handle SKU breathing effect
+            breath_color = "White"  # You can modify this or make it dynamic
+
+            # Stop existing SKU breathing effect if running
+            if sku_thread and sku_thread.is_alive():
+                print("[Info] Stopping the current SKU breathing effect...")
+                sku_stop_event.set()
+                sku_thread.join()
+                sku_stop_event.clear()
+
+            # Start new SKU breathing effect
+            print(f"[Info] Starting breathing effect on SKU LEDs: {addresses} with color: {breath_color}")
+            sku_thread = threading.Thread(
+                target=breathe_effect,
+                args=(breath_color, addresses, BREATH_DURATION, FPS, sku_stop_event),
+                daemon=True
+            )
+            sku_thread.start()
+
+        elif input_type == 'so':
+            # Handle Sales Order breathing effect
+            breath_color = "Blue"  # Assign a different color for Sales Orders
+
+            # Stop existing Sales Order breathing effect if running
+            if so_thread and so_thread.is_alive():
+                print("[Info] Stopping the current Sales Order breathing effect...")
+                so_stop_event.set()
+                so_thread.join()
+                so_stop_event.clear()
+
+            # Start new Sales Order breathing effect
+            print(f"[Info] Starting breathing effect on Sales Order LEDs: {addresses} with color: {breath_color}")
+            so_thread = threading.Thread(
+                target=breathe_effect,
+                args=(breath_color, addresses, BREATH_DURATION, FPS, so_stop_event),
+                daemon=True
+            )
+            so_thread.start()
+
+    # After exiting the loop, ensure all breathing threads are stopped and LEDs are turned off
+    print("[Info] Shutting down all breathing effects...")
+    if sku_thread and sku_thread.is_alive():
+        sku_stop_event.set()
+        sku_thread.join()
+
+    if so_thread and so_thread.is_alive():
+        so_stop_event.set()
+        so_thread.join()
+
+    reset_leds([])  # Turn off all LEDs
+    print("All LEDs turned off. Goodbye!")
 
 if __name__ == "__main__":
     main()
