@@ -209,14 +209,13 @@ def handle_input(df_sku, df_order):
             print("[Info] No LED addresses found for the SKUs in this Sales Order.")
             return None
 
-        # Start breathing effect for each SKU with its own color
+        # Start breathing effect for each unique SKU with its own color
+        # Assuming each SKU has a unique color, else assign a default color
         for sku in skus:
             addresses = find_address_by_sku(df_sku, sku)
             if addresses:
                 # You can define a default color or map SKU to specific colors if needed
-                # Here, we'll use the color defined in COLOR_MAP or default to "White"
-                # If SKUs have predefined colors, you can adjust accordingly
-                # For simplicity, we'll use "White" here
+                # Here, we'll use "White" for sales order breathing
                 breath_color = "White"
                 with thread_lock:
                     # Generate a unique thread ID
