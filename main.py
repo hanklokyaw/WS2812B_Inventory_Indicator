@@ -16,7 +16,7 @@ LED_PIN = board.D18     # GPIO pin connected to the pixels (must support PWM!).
 
 # Paths to the data files
 SKU_EXCEL_FILE_PATH = "/home/anapi01/Downloads/test_sku.xlsx"
-SALES_ORDER_CSV_PATH = "/home/anapi01/Downloads/sales_order.csv"
+SALES_ORDER_CSV_PATH = "/home/anapi01/WS2812B_test/sales_order.csv"
 
 # Initialize the NeoPixel strip.
 pixels = neopixel.NeoPixel(
